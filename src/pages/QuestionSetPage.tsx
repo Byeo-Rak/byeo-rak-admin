@@ -9,6 +9,7 @@ import {
   assignUnknownImage,
   type UnknownImage,
 } from '../firebase/storage';
+import { hasExplanationError, padQuestionNo } from '../utils/questionUtils';
 import type { Question, QuestionSet } from '../types';
 
 // ── 상수 ────────────────────────────────────────────────────────────────────
@@ -21,12 +22,6 @@ const SLOT_LABELS: Record<string, string> = {
 };
 const SLOTS = ['question', 'option1', 'option2', 'option3', 'option4'] as const;
 type Slot = (typeof SLOTS)[number];
-
-// ── 오류 판정 ────────────────────────────────────────────────────────────────
-function hasExplanationError(q: Question): boolean {
-  const exp = q.explanation?.trim() ?? '';
-  return exp === '' || exp.includes('ai 해설 오류');
-}
 
 // ── Unknown 이미지 모달 ────────────────────────────────────────────────────────
 function UnknownImageModal({
@@ -454,6 +449,150 @@ function QuestionCard({
   );
 }
 
+// ── 누락 문제 추가 모달 ────────────────────────────────────────────────────────
+function AddQuestionModal({
+  missingNo,
+  qSet,
+  certificationId,
+  docId,
+  userId,
+  userEmail,
+  onAdded,
+  onClose,
+}: {
+  missingNo: number;
+  qSet: QuestionSet;
+  certificationId: string;
+  docId: string;
+  userId: string;
+  userEmail: string;
+  onAdded: (no: string, q: Question) => void;
+  onClose: () => void;
+}) {
+  const emptySlot = { text: '', Image: 0 };
+  const [draft, setDraft] = useState<Question>({
+    number: missingNo,
+    question: { ...emptySlot },
+    option1: { ...emptySlot },
+    option2: { ...emptySlot },
+    option3: { ...emptySlot },
+    option4: { ...emptySlot },
+    answer: '1',
+    explanation: '',
+    course: qSet.course,
+    updatedAt: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSlotText = (slot: Slot, value: string) =>
+    setDraft((prev) => ({ ...prev, [slot]: { ...prev[slot], text: value } }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    const no = padQuestionNo(missingNo);
+    try {
+      await updateQuestion(certificationId, docId, no, {
+        ...draft,
+        updatedAt: new Date().toISOString(),
+      });
+      await writeAuditLog({
+        userId,
+        userEmail,
+        action: 'ADD_QUESTION',
+        certificationId,
+        docId,
+        questionNo: no,
+        field: 'all',
+        before: null,
+        after: draft,
+        timestamp: new Date().toISOString(),
+      });
+      toast.success(`${no}번 문제가 추가되었습니다.`);
+      onAdded(no, { ...draft, updatedAt: new Date().toISOString() });
+    } catch (e) {
+      console.error(e);
+      toast.error('문제 추가에 실패했습니다.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div>
+            <h2 className="font-bold text-gray-900">누락 문제 추가</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{docId} · {padQuestionNo(missingNo)}번</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-6 py-4 space-y-4">
+          {SLOTS.map((slot) => (
+            <div key={slot}>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                {SLOT_LABELS[slot]}
+              </label>
+              <textarea
+                rows={slot === 'question' ? 3 : 2}
+                value={draft[slot].text}
+                onChange={(e) => handleSlotText(slot, e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+              />
+            </div>
+          ))}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1.5">정답</label>
+            <div className="flex gap-2">
+              {['1', '2', '3', '4'].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setDraft((prev) => ({ ...prev, answer: n }))}
+                  className={`w-10 h-10 rounded-lg border-2 font-bold text-sm transition ${
+                    draft.answer === n
+                      ? 'bg-brand-600 border-brand-600 text-white'
+                      : 'border-gray-300 text-gray-500 hover:border-brand-400'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">해설</label>
+            <textarea
+              rows={4}
+              value={draft.explanation}
+              onChange={(e) => setDraft((prev) => ({ ...prev, explanation: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+          >
+            취소
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-5 py-2 text-sm bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-lg font-semibold transition"
+          >
+            {saving ? '추가 중...' : '문제 추가'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 메인 페이지 ───────────────────────────────────────────────────────────────
 export default function QuestionSetPage() {
   const { certificationId, docId } = useParams<{
@@ -465,6 +604,7 @@ export default function QuestionSetPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [onlyErrors, setOnlyErrors] = useState(false);
+  const [addingNo, setAddingNo] = useState<number | null>(null);
 
   useEffect(() => {
     if (!certificationId || !docId) return;
@@ -480,6 +620,19 @@ export default function QuestionSetPage() {
     });
   };
 
+  const handleAdded = (no: string, q: Question) => {
+    setQSet((prev) => {
+      if (!prev) return prev;
+      const newCount = Object.keys(prev.questions).length + 1;
+      return {
+        ...prev,
+        questionCount: newCount,
+        questions: { ...prev.questions, [no]: q },
+      };
+    });
+    setAddingNo(null);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -492,7 +645,26 @@ export default function QuestionSetPage() {
     return <div className="p-8 text-gray-500">문제 세트를 찾을 수 없습니다.</div>;
   }
 
-  const sortedKeys = Object.keys(qSet.questions).sort();
+  const existingNums = new Set(
+    Object.values(qSet.questions).map((q) => q.number)
+  );
+  const numArray = [...existingNums];
+  const minNum = numArray.length > 0 ? Math.min(...numArray) : 1;
+  const maxNum = numArray.length > 0 ? Math.max(...numArray) : 0;
+  // 실제 존재하는 번호 범위(min~max) 안에서만 누락 감지
+  const missingNums = Array.from(
+    { length: maxNum - minNum + 1 },
+    (_, i) => minNum + i
+  ).filter((n) => !existingNums.has(n));
+
+  // 오류 있는 문제 먼저, 그 다음 번호순
+  const sortedKeys = Object.keys(qSet.questions).sort((a, b) => {
+    const ae = hasExplanationError(qSet.questions[a]);
+    const be = hasExplanationError(qSet.questions[b]);
+    if (ae !== be) return ae ? -1 : 1;
+    return a.localeCompare(b);
+  });
+
   const errorKeys = sortedKeys.filter((no) => hasExplanationError(qSet.questions[no]));
 
   const filteredKeys = sortedKeys.filter((no) => {
@@ -510,6 +682,19 @@ export default function QuestionSetPage() {
 
   return (
     <div className="p-8 max-w-4xl">
+      {addingNo !== null && (
+        <AddQuestionModal
+          missingNo={addingNo}
+          qSet={qSet}
+          certificationId={certificationId!}
+          docId={docId!}
+          userId={user?.uid ?? ''}
+          userEmail={user?.email ?? ''}
+          onAdded={handleAdded}
+          onClose={() => setAddingNo(null)}
+        />
+      )}
+
       {/* 브레드크럼 */}
       <div className="mb-2 flex items-center gap-2 text-sm text-gray-400">
         <Link to="/" className="hover:text-brand-600 transition">자격증 목록</Link>
@@ -522,14 +707,19 @@ export default function QuestionSetPage() {
       </div>
 
       {/* 헤더 */}
-      <div className="flex items-start justify-between mb-5 mt-2 gap-4">
+      <div className="flex items-start justify-between mb-4 mt-2 gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">{docId}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {qSet.course.name} · {qSet.year}년 {qSet.round}회차 · {sortedKeys.length}문제
+            {qSet.course.name} · {qSet.year}년 {qSet.round}회차 · {Object.keys(qSet.questions).length}문제
             {errorKeys.length > 0 && (
               <span className="ml-2 text-red-500 font-medium">
                 ⚠ 해설 오류 {errorKeys.length}개
+              </span>
+            )}
+            {missingNums.length > 0 && (
+              <span className="ml-2 text-orange-500 font-medium">
+                ⚠ 누락 {missingNums.length}개
               </span>
             )}
           </p>
@@ -543,7 +733,7 @@ export default function QuestionSetPage() {
                 : 'border-gray-300 text-gray-600 hover:border-red-400'
             }`}
           >
-            오류만 보기 {errorKeys.length > 0 && `(${errorKeys.length})`}
+            오류만 보기{errorKeys.length > 0 && ` (${errorKeys.length})`}
           </button>
           <input
             type="text"
@@ -554,6 +744,27 @@ export default function QuestionSetPage() {
           />
         </div>
       </div>
+
+      {/* 누락 문제 배너 */}
+      {missingNums.length > 0 && (
+        <div className="mb-5 bg-orange-50 border border-orange-200 rounded-xl px-5 py-4">
+          <p className="text-sm font-semibold text-orange-700 mb-3">
+            ⚠ 누락된 문제 번호 ({missingNums.length}개)
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {missingNums.map((n) => (
+              <button
+                key={n}
+                onClick={() => setAddingNo(n)}
+                className="flex items-center gap-1.5 bg-white border border-orange-300 hover:border-orange-500 hover:bg-orange-50 text-orange-700 text-xs font-medium px-3 py-1.5 rounded-lg transition"
+              >
+                <span className="font-bold">{padQuestionNo(n)}번</span>
+                <span className="text-orange-400">+ 추가</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 문제 목록 */}
       <div className="space-y-5">

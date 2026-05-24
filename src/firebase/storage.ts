@@ -22,9 +22,17 @@ export async function getQuestionImages(
     );
     const result = await listAll(folderRef);
 
+    // 파일명 기준 중복 제거 (동일 이름 파일이 여러 번 등록된 경우 방지)
+    const seen = new Set<string>();
+    const uniqueItems = result.items.filter((item) => {
+      if (seen.has(item.name)) return false;
+      seen.add(item.name);
+      return true;
+    });
+
     const entries: { slot: string; idx: number; url: string }[] = [];
     await Promise.all(
-      result.items.map(async (item) => {
+      uniqueItems.map(async (item) => {
         const match = item.name.match(/^(\w+)-(\d+)\./);
         if (match) {
           const url = await getDownloadURL(item);
@@ -38,7 +46,10 @@ export async function getQuestionImages(
       .sort((a, b) => a.idx - b.idx)
       .forEach(({ slot, url }) => {
         if (!urlMap[slot]) urlMap[slot] = [];
-        urlMap[slot].push(url);
+        // URL 기준으로도 중복 제거 (혹시 다른 이름이지만 같은 파일인 경우)
+        if (!urlMap[slot].includes(url)) {
+          urlMap[slot].push(url);
+        }
       });
 
     return urlMap;
