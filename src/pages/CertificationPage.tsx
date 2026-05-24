@@ -72,8 +72,12 @@ export default function CertificationPage() {
             {filtered.map((s, idx) => (
               <tr
                 key={s.docId}
-                className={`border-b border-gray-100 hover:bg-brand-50 transition ${
-                  idx % 2 === 0 ? '' : 'bg-gray-50/50'
+                className={`border-b transition ${
+                  s.questionCount !== 20
+                    ? 'bg-red-50 border-red-100 hover:bg-red-100'
+                    : idx % 2 === 0
+                    ? 'border-gray-100 hover:bg-brand-50'
+                    : 'bg-gray-50/50 border-gray-100 hover:bg-brand-50'
                 }`}
               >
                 <td className="px-5 py-3 font-mono text-xs text-gray-600">
@@ -83,8 +87,14 @@ export default function CertificationPage() {
                 <td className="px-5 py-3 text-gray-700">{s.year}</td>
                 <td className="px-5 py-3 text-gray-700">{s.round}회</td>
                 <td className="px-5 py-3">
-                  <span className="bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full text-xs font-medium">
-                    {s.questionCount}문제
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      s.questionCount !== 20
+                        ? 'bg-red-100 text-red-600'
+                        : 'bg-brand-100 text-brand-700'
+                    }`}
+                  >
+                    {s.questionCount}문제{s.questionCount !== 20 && ' ⚠'}
                   </span>
                 </td>
                 <td className="px-5 py-3 text-gray-500 text-xs">
