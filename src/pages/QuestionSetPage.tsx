@@ -7,7 +7,9 @@ import {
   getQuestionImages,
   listUnknownImages,
   assignUnknownImage,
+  moveQuestionImageToUnknown,
   type UnknownImage,
+  type QuestionSlotImage,
 } from '../firebase/storage';
 import { hasExplanationError, padQuestionNo } from '../utils/questionUtils';
 import type { Question, QuestionSet } from '../types';
@@ -38,7 +40,7 @@ function UnknownImageModal({
   certificationId: string;
   companyId: string;
   docId: string;
-  onAssigned: (slot: Slot, url: string, newCount: number) => void;
+  onAssigned: (slot: Slot, image: QuestionSlotImage, newCount: number) => Promise<void>;
   onClose: () => void;
 }) {
   const [images, setImages] = useState<UnknownImage[]>([]);
@@ -58,7 +60,7 @@ function UnknownImageModal({
     setAssigning(true);
     try {
       const existingCount = question[targetSlot].Image;
-      const url = await assignUnknownImage({
+      const image = await assignUnknownImage({
         unknownPath: selected.path,
         certId: certificationId,
         companyId,
@@ -67,10 +69,9 @@ function UnknownImageModal({
         slot: targetSlot,
         existingCount,
       });
-      onAssigned(targetSlot, url, existingCount + 1);
+      await onAssigned(targetSlot, image, existingCount + 1);
       setImages((prev) => prev.filter((img) => img.path !== selected.path));
       setSelected(null);
-      toast.success('이미지가 배정되었습니다.');
     } catch (e) {
       console.error(e);
       toast.error('이미지 배정에 실패했습니다.');
@@ -163,13 +164,17 @@ function UnknownImageModal({
 function SlotEditor({
   slot,
   text,
-  imageUrls,
+  images,
+  movingPath,
   onChange,
+  onMoveToUnknown,
 }: {
   slot: Slot;
   text: string;
-  imageUrls: string[];
+  images: QuestionSlotImage[];
+  movingPath: string | null;
   onChange: (value: string) => void;
+  onMoveToUnknown: (slot: Slot, image: QuestionSlotImage) => void;
 }) {
   return (
     <div>
@@ -182,15 +187,25 @@ function SlotEditor({
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
       />
-      {imageUrls.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {imageUrls.map((url, i) => (
-            <img
-              key={i}
-              src={url}
-              alt={`${slot} 이미지 ${i + 1}`}
-              className="max-h-48 rounded-lg border border-gray-200 object-contain bg-gray-50"
-            />
+      {images.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-3">
+          {images.map((img) => (
+            <div key={img.path} className="relative group">
+              <img
+                src={img.url}
+                alt={img.name}
+                className="max-h-48 rounded-lg border border-gray-200 object-contain bg-gray-50"
+              />
+              <p className="text-[10px] text-gray-400 mt-1 truncate max-w-[12rem]">{img.name}</p>
+              <button
+                type="button"
+                onClick={() => onMoveToUnknown(slot, img)}
+                disabled={movingPath === img.path}
+                className="mt-1 w-full text-xs px-2 py-1 rounded-md border border-orange-300 text-orange-600 hover:bg-orange-50 disabled:opacity-50 transition"
+              >
+                {movingPath === img.path ? '이동 중...' : 'Unknown으로 이동'}
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -220,8 +235,9 @@ function QuestionCard({
 }) {
   const [draft, setDraft] = useState<Question>({ ...q });
   const [saving, setSaving] = useState(false);
-  const [images, setImages] = useState<Record<string, string[]>>({});
+  const [images, setImages] = useState<Record<string, QuestionSlotImage[]>>({});
   const [imagesLoading, setImagesLoading] = useState(false);
+  const [movingPath, setMovingPath] = useState<string | null>(null);
   const [showUnknownModal, setShowUnknownModal] = useState(false);
 
   const error = hasExplanationError(q);
@@ -259,13 +275,92 @@ function QuestionCard({
     setDraft((prev) => ({ ...prev, [slot]: { ...prev[slot], text: value } }));
   }, []);
 
-  const handleAssigned = (slot: Slot, url: string, newCount: number) => {
-    setImages((prev) => ({ ...prev, [slot]: [...(prev[slot] ?? []), url] }));
-    setDraft((prev) => ({
-      ...prev,
-      [slot]: { ...prev[slot], Image: newCount },
-    }));
-    setShowUnknownModal(false);
+  const persistImageCount = async (
+    slot: Slot,
+    newCount: number,
+    action: string,
+    before: unknown,
+    after: unknown
+  ) => {
+    const updatedSlot = { ...draft[slot], Image: newCount };
+    const updatedQuestion = {
+      ...draft,
+      [slot]: updatedSlot,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await updateQuestion(certificationId, docId, q._no, {
+      [slot]: updatedSlot,
+    });
+    await writeAuditLog({
+      userId,
+      userEmail,
+      action,
+      certificationId,
+      docId,
+      questionNo: q._no,
+      field: `${slot}.Image`,
+      before,
+      after,
+      timestamp: new Date().toISOString(),
+    });
+
+    setDraft(updatedQuestion);
+    onSaved(q._no, updatedQuestion);
+  };
+
+  const handleAssigned = async (slot: Slot, image: QuestionSlotImage, newCount: number) => {
+    try {
+      await persistImageCount(
+        slot,
+        newCount,
+        'ASSIGN_UNKNOWN_IMAGE',
+        q[slot].Image,
+        { image: image.name, count: newCount }
+      );
+      setImages((prev) => ({ ...prev, [slot]: [...(prev[slot] ?? []), image] }));
+      setShowUnknownModal(false);
+      toast.success('이미지가 배정되었습니다.');
+    } catch (e) {
+      console.error(e);
+      toast.error('이미지 배정 저장에 실패했습니다.');
+      throw e;
+    }
+  };
+
+  const handleMoveToUnknown = async (slot: Slot, image: QuestionSlotImage) => {
+    if (!window.confirm('이 이미지를 Unknown으로 이동할까요?')) return;
+
+    setMovingPath(image.path);
+    try {
+      const { newCount } = await moveQuestionImageToUnknown({
+        imagePath: image.path,
+        certId: certificationId,
+        companyId,
+        docId,
+        questionNo: q._no,
+        slot,
+      });
+
+      await persistImageCount(
+        slot,
+        newCount,
+        'MOVE_IMAGE_TO_UNKNOWN',
+        { image: image.name, count: q[slot].Image },
+        { unknown: true, count: newCount }
+      );
+
+      setImages((prev) => ({
+        ...prev,
+        [slot]: (prev[slot] ?? []).filter((img) => img.path !== image.path),
+      }));
+      toast.success('Unknown으로 이동했습니다.');
+    } catch (e) {
+      console.error(e);
+      toast.error('Unknown으로 이동하지 못했습니다.');
+    } finally {
+      setMovingPath(null);
+    }
   };
 
   const handleSave = async () => {
@@ -369,8 +464,10 @@ function QuestionCard({
               key={slot}
               slot={slot}
               text={draft[slot].text}
-              imageUrls={images[slot] ?? []}
+              images={images[slot] ?? []}
+              movingPath={movingPath}
               onChange={(v) => handleSlotText(slot, v)}
+              onMoveToUnknown={handleMoveToUnknown}
             />
           ))}
 
@@ -423,7 +520,7 @@ function QuestionCard({
               onClick={() => setShowUnknownModal(true)}
               className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600 border border-gray-300 hover:border-brand-400 px-3 py-1.5 rounded-lg transition"
             >
-              <span>🖼</span> Unknown 이미지 추가
+              <span>🖼</span> Unknown에서 이미지 추가
             </button>
 
             <div className="flex gap-2">

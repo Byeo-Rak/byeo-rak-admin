@@ -8,13 +8,19 @@ import {
 } from 'firebase/storage';
 import { storage } from './config';
 
+export interface QuestionSlotImage {
+  url: string;
+  path: string;
+  name: string;
+}
+
 // ── 문제 슬롯 이미지 URL 목록 조회 ────────────────────────────────────────────
 export async function getQuestionImages(
   certId: string,
   companyId: string,
   docId: string,
   questionNo: string
-): Promise<Record<string, string[]>> {
+): Promise<Record<string, QuestionSlotImage[]>> {
   try {
     const folderRef = ref(
       storage,
@@ -30,25 +36,28 @@ export async function getQuestionImages(
       return true;
     });
 
-    const entries: { slot: string; idx: number; url: string }[] = [];
+    const entries: { slot: string; idx: number; image: QuestionSlotImage }[] = [];
     await Promise.all(
       uniqueItems.map(async (item) => {
         const match = item.name.match(/^(\w+)-(\d+)\./);
         if (match) {
           const url = await getDownloadURL(item);
-          entries.push({ slot: match[1], idx: parseInt(match[2]), url });
+          entries.push({
+            slot: match[1],
+            idx: parseInt(match[2]),
+            image: { url, path: item.fullPath, name: item.name },
+          });
         }
       })
     );
 
-    const urlMap: Record<string, string[]> = {};
+    const urlMap: Record<string, QuestionSlotImage[]> = {};
     entries
       .sort((a, b) => a.idx - b.idx)
-      .forEach(({ slot, url }) => {
+      .forEach(({ slot, image }) => {
         if (!urlMap[slot]) urlMap[slot] = [];
-        // URL 기준으로도 중복 제거 (혹시 다른 이름이지만 같은 파일인 경우)
-        if (!urlMap[slot].includes(url)) {
-          urlMap[slot].push(url);
+        if (!urlMap[slot].some((img) => img.url === image.url)) {
+          urlMap[slot].push(image);
         }
       });
 
@@ -90,19 +99,57 @@ export async function assignUnknownImage(params: {
   questionNo: string;
   slot: string;
   existingCount: number;
-}): Promise<string> {
+}): Promise<QuestionSlotImage> {
   const { unknownPath, certId, companyId, docId, questionNo, slot, existingCount } =
     params;
   const ext = unknownPath.split('.').pop() ?? 'jpg';
   const idx = existingCount + 1;
+  const fileName = `${slot}-${idx}.${ext}`;
 
   const srcRef = ref(storage, unknownPath);
-  const destPath = `certifications/${certId}/${companyId}/${docId}/${questionNo}/${slot}-${idx}.${ext}`;
+  const destPath = `certifications/${certId}/${companyId}/${docId}/${questionNo}/${fileName}`;
   const destRef = ref(storage, destPath);
 
   const blob = await getBlob(srcRef);
   await uploadBytes(destRef, blob);
   await deleteObject(srcRef);
 
-  return getDownloadURL(destRef);
+  return {
+    url: await getDownloadURL(destRef),
+    path: destPath,
+    name: fileName,
+  };
+}
+
+// ── 문제 슬롯 이미지 → Unknown으로 이동 ─────────────────────────────────────
+export async function moveQuestionImageToUnknown(params: {
+  imagePath: string;
+  certId: string;
+  companyId: string;
+  docId: string;
+  questionNo: string;
+  slot: string;
+}): Promise<{ newCount: number; unknownPath: string }> {
+  const { imagePath, certId, companyId, docId, questionNo, slot } = params;
+
+  const fileName = imagePath.split('/').pop() ?? `image-${Date.now()}.jpg`;
+  const unknownName = `${Date.now()}-${fileName}`;
+
+  const srcRef = ref(storage, imagePath);
+  const unknownPath = `certifications/unknown/${unknownName}`;
+  const destRef = ref(storage, unknownPath);
+
+  const blob = await getBlob(srcRef);
+  await uploadBytes(destRef, blob);
+  await deleteObject(srcRef);
+
+  const folderRef = ref(
+    storage,
+    `certifications/${certId}/${companyId}/${docId}/${questionNo}`
+  );
+  const result = await listAll(folderRef);
+  const slotPattern = new RegExp(`^${slot}-\\d+\\.`);
+  const newCount = result.items.filter((item) => slotPattern.test(item.name)).length;
+
+  return { newCount, unknownPath };
 }
