@@ -298,8 +298,8 @@ function QuestionCard({
           docId,
           questionNo: q._no,
           field,
-          before: (q as Record<string, unknown>)[field],
-          after: (draft as Record<string, unknown>)[field],
+          before: (q as unknown as Record<string, unknown>)[field],
+          after: (draft as unknown as Record<string, unknown>)[field],
           timestamp: new Date().toISOString(),
         });
       }

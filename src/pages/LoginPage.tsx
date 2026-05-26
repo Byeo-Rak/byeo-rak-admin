@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 type Mode = 'login' | 'signup';
 
 export default function LoginPage() {
-  const { user, status, loginWithEmail, signUpWithEmail, loginWithGoogle } = useAuth();
+  const { status, loginWithEmail, signUpWithEmail, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>('login');
 

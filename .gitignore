@@ -16,6 +16,9 @@ dist-ssr
 
 # Firebase service account (sensitive!)
 service-account.json
+.firebase/*
+.firebaserc
+firebase.json
 
 # Editor
 .vscode/*
