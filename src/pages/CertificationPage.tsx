@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { fetchQuestionSets } from '../firebase/firestore';
 import { countExplanationErrors } from '../utils/questionUtils';
@@ -10,10 +10,102 @@ interface EnrichedSet extends QuestionSet {
   _hasError: boolean;
 }
 
+type SortKey =
+  | 'docId'
+  | 'course'
+  | 'year'
+  | 'round'
+  | 'questionCount'
+  | 'expErrors'
+  | 'examDate';
+type SortDir = 'asc' | 'desc';
+
+const SORT_COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'docId', label: '문서 ID' },
+  { key: 'course', label: '과목' },
+  { key: 'year', label: '연도' },
+  { key: 'round', label: '회차' },
+  { key: 'questionCount', label: '문제 수' },
+  { key: 'expErrors', label: '해설 오류' },
+  { key: 'examDate', label: '시험일' },
+];
+
 function enrich(s: QuestionSet): EnrichedSet {
   const expErrors = countExplanationErrors(s.questions ?? {});
   const countError = s.questionCount !== 20;
   return { ...s, _expErrors: expErrors, _countError: countError, _hasError: expErrors > 0 || countError };
+}
+
+function compareSets(a: EnrichedSet, b: EnrichedSet, key: SortKey, dir: SortDir): number {
+  const mul = dir === 'asc' ? 1 : -1;
+  let cmp = 0;
+
+  switch (key) {
+    case 'docId':
+      cmp = a.docId.localeCompare(b.docId);
+      break;
+    case 'course':
+      cmp = a.course.name.localeCompare(b.course.name, 'ko');
+      break;
+    case 'year':
+      cmp = a.year - b.year;
+      break;
+    case 'round':
+      cmp = a.round - b.round;
+      break;
+    case 'questionCount':
+      cmp = a.questionCount - b.questionCount;
+      break;
+    case 'expErrors':
+      cmp = a._expErrors - b._expErrors;
+      break;
+    case 'examDate':
+      cmp = (a.examDate || '').localeCompare(b.examDate || '');
+      break;
+  }
+
+  if (cmp !== 0) return cmp * mul;
+
+  // 동률 시: 시험일 → 과목 → 문서 ID
+  const dateCmp = (a.examDate || '').localeCompare(b.examDate || '');
+  if (dateCmp !== 0) return dateCmp;
+
+  const courseCmp = a.course.name.localeCompare(b.course.name, 'ko');
+  if (courseCmp !== 0) return courseCmp;
+
+  return a.docId.localeCompare(b.docId);
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeKey: SortKey;
+  dir: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = activeKey === sortKey;
+  return (
+    <th className="text-left px-5 py-3 font-semibold">
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 transition ${
+          active ? 'text-brand-700' : 'text-gray-600 hover:text-gray-900'
+        }`}
+      >
+        {label}
+        <span className={`text-xs ${active ? 'text-brand-600' : 'text-gray-300'}`}>
+          {active ? (dir === 'asc' ? '↑' : '↓') : '↕'}
+        </span>
+      </button>
+    </th>
+  );
 }
 
 export default function CertificationPage() {
@@ -22,22 +114,25 @@ export default function CertificationPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [onlyErrors, setOnlyErrors] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('examDate');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      if (sortKey === key) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortKey(key);
+        setSortDir('asc');
+      }
+    },
+    [sortKey]
+  );
 
   useEffect(() => {
     if (!certificationId) return;
     fetchQuestionSets(certificationId)
-      .then((data) => {
-        const enriched = data.map(enrich);
-        // 오류 있는 세트 먼저, 그 다음 연도 내림차순/회차 오름차순
-        enriched.sort((a, b) => {
-          if (a._hasError !== b._hasError) return a._hasError ? -1 : 1;
-          const errA = a._expErrors + (a._countError ? 100 : 0);
-          const errB = b._expErrors + (b._countError ? 100 : 0);
-          if (errA !== errB) return errB - errA;
-          return b.year - a.year || a.round - b.round;
-        });
-        setSets(enriched);
-      })
+      .then((data) => setSets(data.map(enrich)))
       .finally(() => setLoading(false));
   }, [certificationId]);
 
@@ -50,6 +145,10 @@ export default function CertificationPage() {
       );
     });
   }, [sets, filter, onlyErrors]);
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => compareSets(a, b, sortKey, sortDir));
+  }, [filtered, sortKey, sortDir]);
 
   const totalErrors = sets.filter((s) => s._hasError).length;
   const totalExpErrors = sets.reduce((acc, s) => acc + s._expErrors, 0);
@@ -109,18 +208,21 @@ export default function CertificationPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200 text-gray-600">
-              <th className="text-left px-5 py-3 font-semibold">문서 ID</th>
-              <th className="text-left px-5 py-3 font-semibold">과목</th>
-              <th className="text-left px-5 py-3 font-semibold">연도</th>
-              <th className="text-left px-5 py-3 font-semibold">회차</th>
-              <th className="text-left px-5 py-3 font-semibold">문제 수</th>
-              <th className="text-left px-5 py-3 font-semibold">해설 오류</th>
-              <th className="text-left px-5 py-3 font-semibold">시험일</th>
+              {SORT_COLUMNS.map(({ key, label }) => (
+                <SortableHeader
+                  key={key}
+                  label={label}
+                  sortKey={key}
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={handleSort}
+                />
+              ))}
               <th className="px-5 py-3" />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((s, idx) => (
+            {sorted.map((s, idx) => (
               <tr
                 key={s.docId}
                 className={`border-b transition ${
@@ -172,7 +274,7 @@ export default function CertificationPage() {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {sorted.length === 0 && (
               <tr>
                 <td colSpan={8} className="text-center text-gray-400 py-12">
                   검색 결과가 없습니다.
