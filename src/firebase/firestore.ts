@@ -50,7 +50,8 @@ export async function updateQuestion(
   certificationId: string,
   docId: string,
   questionNo: string,
-  patch: Partial<QuestionSet['questions'][string]>
+  patch: Partial<QuestionSet['questions'][string]>,
+  options?: { questionCount?: number }
 ): Promise<void> {
   const ref = doc(db, 'certifications', certificationId, 'CBT', docId);
   await setDoc(
@@ -62,6 +63,9 @@ export async function updateQuestion(
           updatedAt: new Date().toISOString(),
         },
       },
+      ...(options?.questionCount !== undefined
+        ? { questionCount: options.questionCount }
+        : {}),
       updatedAt: new Date().toISOString(),
     },
     { merge: true }

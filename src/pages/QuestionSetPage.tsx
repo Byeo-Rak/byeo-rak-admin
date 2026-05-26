@@ -587,11 +587,18 @@ function AddQuestionModal({
   const handleSave = async () => {
     setSaving(true);
     const no = padQuestionNo(missingNo);
+    const newCount = Object.keys(qSet.questions).length + 1;
     try {
-      await updateQuestion(certificationId, docId, no, {
-        ...draft,
-        updatedAt: new Date().toISOString(),
-      });
+      await updateQuestion(
+        certificationId,
+        docId,
+        no,
+        {
+          ...draft,
+          updatedAt: new Date().toISOString(),
+        },
+        { questionCount: newCount }
+      );
       await writeAuditLog({
         userId,
         userEmail,
