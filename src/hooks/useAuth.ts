@@ -8,6 +8,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase/config';
+import { checkIsAdmin } from '../firebase/firestore';
 
 export type AuthStatus = 'loading' | 'unauthenticated' | 'admin';
 
@@ -16,9 +17,24 @@ export function useAuth() {
   const [status, setStatus] = useState<AuthStatus>('loading');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        setUser(null);
+        setStatus('unauthenticated');
+        return;
+      }
+
+      const token = await u.getIdTokenResult(true);
+      const isAdmin = token.claims.admin === true || (await checkIsAdmin(u.uid));
+      if (!isAdmin) {
+        await signOut(auth);
+        setUser(null);
+        setStatus('unauthenticated');
+        return;
+      }
+
       setUser(u);
-      setStatus(u ? 'admin' : 'unauthenticated');
+      setStatus('admin');
     });
     return unsubscribe;
   }, []);

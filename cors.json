@@ -1,0 +1,20 @@
+[
+  {
+    "origin": [
+      "https://byeo-rak-admin.web.app",
+      "https://byeo-rak.web.app",
+      "https://byeo-rak.firebaseapp.com",
+      "http://localhost:5173",
+      "http://localhost:4173"
+    ],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE"],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "Content-Length",
+      "X-Firebase-Storage-Version",
+      "x-goog-resumable"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

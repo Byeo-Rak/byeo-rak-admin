@@ -6,7 +6,27 @@ import {
   uploadBytes,
   deleteObject,
 } from 'firebase/storage';
-import { storage } from './config';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, storage } from './config';
+
+async function ensureAuthReady(): Promise<void> {
+  if (auth.currentUser) {
+    await auth.currentUser.getIdToken(true);
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      unsub();
+      if (!user) {
+        reject(new Error('Not authenticated'));
+        return;
+      }
+      await user.getIdToken(true);
+      resolve();
+    });
+  });
+}
 
 export interface QuestionSlotImage {
   url: string;
@@ -75,19 +95,16 @@ export interface UnknownImage {
 }
 
 export async function listUnknownImages(): Promise<UnknownImage[]> {
-  try {
-    const folderRef = ref(storage, 'certifications/unknown');
-    const result = await listAll(folderRef);
-    return Promise.all(
-      result.items.map(async (item) => ({
-        name: item.name,
-        path: item.fullPath,
-        url: await getDownloadURL(item),
-      }))
-    );
-  } catch {
-    return [];
-  }
+  await ensureAuthReady();
+  const folderRef = ref(storage, 'certifications/unknown');
+  const result = await listAll(folderRef);
+  return Promise.all(
+    result.items.map(async (item) => ({
+      name: item.name,
+      path: item.fullPath,
+      url: await getDownloadURL(item),
+    }))
+  );
 }
 
 // ── Unknown 이미지 → 문제 슬롯으로 이동 및 배정 ───────────────────────────────
@@ -100,6 +117,7 @@ export async function assignUnknownImage(params: {
   slot: string;
   existingCount: number;
 }): Promise<QuestionSlotImage> {
+  await ensureAuthReady();
   const { unknownPath, certId, companyId, docId, questionNo, slot, existingCount } =
     params;
   const ext = unknownPath.split('.').pop() ?? 'jpg';
@@ -130,6 +148,7 @@ export async function moveQuestionImageToUnknown(params: {
   questionNo: string;
   slot: string;
 }): Promise<{ newCount: number; unknownPath: string }> {
+  await ensureAuthReady();
   const { imagePath, certId, companyId, docId, questionNo, slot } = params;
 
   const fileName = imagePath.split('/').pop() ?? `image-${Date.now()}.jpg`;

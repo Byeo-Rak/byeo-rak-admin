@@ -1,0 +1,34 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAdmin() {
+      return request.auth != null
+        && (request.auth.token.admin == true
+            || firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid)));
+    }
+
+    // Unknown 이미지: admin만 읽기/쓰기/삭제
+    // listAll()은 폴더 경로 자체에 대한 list 권한이 필요하므로 {allPaths=**} 사용
+    match /certifications/unknown/{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // CBT 문제 이미지: 읽기 공개, admin만 수정
+    match /certifications/{certId}/CBT/{sessionId}/{questionNo}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 사용자 프로필 이미지
+    match /users/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

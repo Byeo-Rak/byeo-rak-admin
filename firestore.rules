@@ -1,0 +1,35 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && (request.auth.token.admin == true
+            || exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // admin 권한 확인용 (본인 문서만 읽기)
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // 자격증 / 문제 세트
+    match /certifications/{certId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+
+      match /CBT/{docId} {
+        allow read: if true;
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    // admin 감사 로그
+    match /auditLogs/{logId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+  }
+}
